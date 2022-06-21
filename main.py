@@ -1,4 +1,5 @@
 import os
+from contextlib import suppress
 from dataclasses import dataclass
 from random import randint
 from urllib.parse import urlsplit, unquote_plus
@@ -198,7 +199,7 @@ def get_amount_comics() -> int:
 
 def delete_image(path_to_image: str) -> None:
     """Удаляем изображение с компьютера"""
-    if os.path.isfile(path_to_image):
+    with suppress(FileNotFoundError):
         os.remove(path_to_image)
 
 
