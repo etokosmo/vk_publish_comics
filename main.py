@@ -1,3 +1,4 @@
+import logging
 import os
 from contextlib import suppress
 from dataclasses import dataclass
@@ -6,6 +7,7 @@ from urllib.parse import urlsplit, unquote_plus
 
 import requests
 from environs import Env
+from retry import retry
 
 VK_API_VERSION = 5.131
 
@@ -17,6 +19,12 @@ class Comics:
     img_url: str
     alt_text: str
     filename: str = ""
+
+
+def check_api_vk_response(response: requests.models.Response) -> None:
+    """Проверяем запрос на api.vk.com. В случае ошибки бросаем исключение"""
+    if error := response.json().get("error"):
+        raise requests.HTTPError(error.get("error_msg"))
 
 
 def download_file(file_url: str, path_to_download: str = '.') -> None:
@@ -53,6 +61,7 @@ def get_file_extension(url: str) -> str:
     return file_extension
 
 
+@retry(requests.exceptions.ConnectionError, tries=3, delay=10)
 def get_comics(comics_number: int) -> Comics:
     """Загрузка комикса с сайта xkcd.com.
 
@@ -79,6 +88,7 @@ def get_comics(comics_number: int) -> Comics:
     return comics
 
 
+@retry(requests.exceptions.ConnectionError, tries=3, delay=10)
 def get_wall_upload_server(vk_app_client_id: str, vk_access_token: str) -> str:
     """Возвращает адрес сервера для загрузки фотографии на стену сообщества
 
@@ -98,10 +108,12 @@ def get_wall_upload_server(vk_app_client_id: str, vk_access_token: str) -> str:
     }
     response = requests.get(url, params=payload)
     response.raise_for_status()
+    check_api_vk_response(response)
     media_on_server_url = response.json().get("response").get("upload_url")
     return media_on_server_url
 
 
+@retry(requests.exceptions.ConnectionError, tries=3, delay=10)
 def upload_image(media_address: str, filename: str) -> dict:
     """Загружаем на сервер Вконтакте фото.
 
@@ -119,9 +131,11 @@ def upload_image(media_address: str, filename: str) -> dict:
         }
         response = requests.post(media_address, files=files)
         response.raise_for_status()
+        check_api_vk_response(response)
         return response.json()
 
 
+@retry(requests.exceptions.ConnectionError, tries=3, delay=10)
 def save_wall_photo(
         uploaded_media: dict,
         vk_app_client_id: int,
@@ -149,12 +163,14 @@ def save_wall_photo(
     }
     response = requests.post(url, params=payload)
     response.raise_for_status()
+    check_api_vk_response(response)
     uploaded_photo = response.json()
     uploaded_photo_id = uploaded_photo.get("response")[0].get("id")
     app_owner_id = uploaded_photo.get("response")[0].get("owner_id")
     return uploaded_photo_id, app_owner_id
 
 
+@retry(requests.exceptions.ConnectionError, tries=3, delay=10)
 def publish_wall_post(
         group_id: int,
         message: str,
@@ -187,8 +203,10 @@ def publish_wall_post(
     }
     response = requests.post(url, params=payload)
     response.raise_for_status()
+    check_api_vk_response(response)
 
 
+@retry(requests.exceptions.ConnectionError, tries=3, delay=10)
 def get_comics_amount() -> int:
     """Получаем id последнего комикса (общее количество комиксов)"""
     url = "https://xkcd.com/info.0.json"
@@ -204,6 +222,11 @@ def delete_image(path_to_image: str) -> None:
 
 
 def main():
+    logging.basicConfig(
+        format='%(asctime)s : %(message)s',
+        datefmt='%d/%m/%Y %H:%M:%S',
+        level=logging.INFO
+    )
     env = Env()
     env.read_env()
     vk_app_client_id = env.int("VK_APP_CLIENT_ID")
@@ -211,26 +234,37 @@ def main():
     group_id = env.int("VK_GROUP_ID")
     from_group = env.int("FROM_GROUP", 1)
 
-    comics_number = randint(1, get_comics_amount())
-    comic = get_comics(comics_number)
-
-    media_address = get_wall_upload_server(vk_app_client_id, vk_access_token)
-    media = upload_image(media_address, comic.filename)
-    photo_id, owner_id = save_wall_photo(
-        media,
-        vk_app_client_id,
-        vk_access_token
-    )
-    publish_wall_post(
-        group_id,
-        comic.alt_text,
-        photo_id,
-        owner_id,
-        vk_access_token,
-        from_group
-    )
-
-    delete_image(comic.filename)
+    try:
+        comics_number = randint(1, get_comics_amount())
+        comic = get_comics(comics_number)
+    except requests.exceptions.ConnectionError:
+        logging.info(f'Потеряно соединение...')
+        return
+    try:
+        media_address = get_wall_upload_server(
+            vk_app_client_id,
+            vk_access_token
+        )
+        media = upload_image(media_address, comic.filename)
+        photo_id, owner_id = save_wall_photo(
+            media,
+            vk_app_client_id,
+            vk_access_token
+        )
+        publish_wall_post(
+            group_id,
+            comic.alt_text,
+            photo_id,
+            owner_id,
+            vk_access_token,
+            from_group
+        )
+    except requests.exceptions.HTTPError as error:
+        logging.info(f'HTTP Error. Сообщение об ошибке: {error}')
+    except requests.exceptions.ConnectionError:
+        logging.info(f'Потеряно соединение...')
+    finally:
+        delete_image(comic.filename)
 
 
 if __name__ == "__main__":
