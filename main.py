@@ -66,12 +66,12 @@ def get_comics(comics_number: int) -> Comics:
     url = f"https://xkcd.com/{comics_number}/info.0.json"
     response = requests.get(url)
     response.raise_for_status()
-    decode_response = response.json()
+    xkcd_comics = response.json()
 
     comics = Comics(
-        decode_response.get("title"),
-        decode_response.get("img"),
-        decode_response.get("alt"),
+        xkcd_comics.get("title"),
+        xkcd_comics.get("img"),
+        xkcd_comics.get("alt"),
     )
     file_extension = get_file_extension(comics.img_url)
     comics.filename = f"comics{comics_number}_{comics.title}{file_extension}"
@@ -149,16 +149,16 @@ def save_wall_photo(
     }
     response = requests.post(url, params=payload)
     response.raise_for_status()
-    decode_response = response.json()
-    uploaded_media_id = decode_response.get("response")[0].get("id")
-    app_owner_id = decode_response.get("response")[0].get("owner_id")
-    return uploaded_media_id, app_owner_id
+    uploaded_photo = response.json()
+    uploaded_photo_id = uploaded_photo.get("response")[0].get("id")
+    app_owner_id = uploaded_photo.get("response")[0].get("owner_id")
+    return uploaded_photo_id, app_owner_id
 
 
 def publish_wall_post(
         group_id: int,
         message: str,
-        uploaded_media_id: int,
+        photo_id: int,
         app_owner_id: int,
         vk_access_token: str,
         from_group: int = 0) -> None:
@@ -167,7 +167,7 @@ def publish_wall_post(
     Args:
         group_id (int): идентификатор сообщества, где опубликуется запись.
         message (str): текст сообщения.
-        uploaded_media_id (int): идентификатор медиа-приложения.
+        photo_id (int): идентификатор медиа-приложения.
         app_owner_id (int): идентификатор владельца медиа-приложения.
         vk_access_token (str): ключ доступа VK.
         from_group (int): публикация от лица сообщества.
@@ -181,7 +181,7 @@ def publish_wall_post(
         "owner_id": f"-{group_id}",
         "from_group": from_group,
         "message": message,
-        "attachments": f"photo{app_owner_id}_{uploaded_media_id}",
+        "attachments": f"photo{app_owner_id}_{photo_id}",
         "access_token": vk_access_token,
         "v": VK_API_VERSION
     }
@@ -189,7 +189,7 @@ def publish_wall_post(
     response.raise_for_status()
 
 
-def get_amount_comics() -> int:
+def get_comics_amount() -> int:
     """Получаем id последнего комикса (общее количество комиксов)"""
     url = "https://xkcd.com/info.0.json"
     response = requests.get(url)
@@ -211,12 +211,12 @@ def main():
     group_id = env.int("VK_GROUP_ID")
     from_group = env.int("FROM_GROUP", 1)
 
-    comics_number = randint(1, get_amount_comics())
+    comics_number = randint(1, get_comics_amount())
     comic = get_comics(comics_number)
 
     media_address = get_wall_upload_server(vk_app_client_id, vk_access_token)
     media = upload_image(media_address, comic.filename)
-    media_id, owner_id = save_wall_photo(
+    photo_id, owner_id = save_wall_photo(
         media,
         vk_app_client_id,
         vk_access_token
@@ -224,7 +224,7 @@ def main():
     publish_wall_post(
         group_id,
         comic.alt_text,
-        media_id,
+        photo_id,
         owner_id,
         vk_access_token,
         from_group
