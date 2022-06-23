@@ -215,12 +215,6 @@ def get_comics_amount() -> int:
     return response.json().get("num")
 
 
-def delete_image(path_to_image: str) -> None:
-    """Удаляем изображение с компьютера"""
-    with suppress(FileNotFoundError):
-        os.remove(path_to_image)
-
-
 def main():
     logging.basicConfig(
         format='%(asctime)s : %(message)s',
@@ -264,7 +258,8 @@ def main():
     except requests.exceptions.ConnectionError:
         logging.info(f'Потеряно соединение...')
     finally:
-        delete_image(comic.filename)
+        with suppress(FileNotFoundError):
+            os.remove(comic.filename)
 
 
 if __name__ == "__main__":
